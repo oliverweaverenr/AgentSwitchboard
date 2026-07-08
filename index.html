@@ -768,8 +768,15 @@
             '跳过默认 KEY/SECRET/TOKEN 环境过滤。',
           Configuration: '配置',
           'Target LLM for OpenCode.': 'OpenCode 目标模型。',
-          'Provider JSON': '提供商 JSON',
-          'Raw configuration object.': '原始配置对象。',
+          'Default Model': '默认模型',
+          'Target LLM used when a provider does not specify its own model.':
+            '当提供商未单独指定模型时使用的默认模型。',
+          'Providers': '提供商',
+          'No providers added yet': '尚未添加任何提供商',
+          'Add Provider': '添加提供商',
+          'Unnamed Provider': '未命名提供商',
+          'ID': '标识',
+          'Package (npm)': 'npm 包',
           'Optional brief description': '可选简短描述',
           Cancel: '取消',
           'Create Profile': '创建档案',
@@ -1311,7 +1318,11 @@
             shellEnvInherit: '',
             shellEnvIgnoreDefaultExcludes: null,
           }
-        return { ...base, model: '', provider: {} }
+        return {
+          ...base,
+          model: '',
+          providers: [],
+        }
       }
 
       function normalizeProfile(tool, profile = {}, opts = {}) {
@@ -1353,12 +1364,19 @@
           )
         }
         if (tool === 'opencode') {
-          next.provider =
-            profile?.provider &&
-            typeof profile.provider === 'object' &&
-            !Array.isArray(profile.provider)
-              ? deepCopy(profile.provider)
-              : {}
+          next.providers = Array.isArray(profile.providers)
+            ? profile.providers
+                .filter((p) => p && typeof p === 'object')
+                .map((p) => ({
+                  id: typeof p.id === 'string' ? p.id : '',
+                  npm: typeof p.npm === 'string' ? p.npm : '',
+                  name: typeof p.name === 'string' ? p.name : '',
+                  baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
+                  apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
+                  model: typeof p.model === 'string' ? p.model : '',
+                }))
+            : []
+          delete next.provider
         }
         ;[
           'enabled',
@@ -1954,7 +1972,24 @@
         },
         opencode(c) {
           const o = JSON.parse(c)
-          return { model: o.model || '', provider: o.provider || {} }
+          let providers = []
+          if (o.provider && typeof o.provider === 'object' && !Array.isArray(o.provider)) {
+            providers = Object.entries(o.provider).map(([id, p]) => {
+              const opt = (p && typeof p === 'object' && p.options) || {}
+              const models = (p && typeof p === 'object' && p.models) || {}
+              const firstModel = Object.keys(models)[0] || ''
+              return {
+                id: id,
+                npm: (p && p.npm) || '',
+                name: (p && p.name) || '',
+                baseUrl: opt.baseURL || '',
+                apiKey: opt.apiKey || '',
+                model: firstModel,
+              }
+            })
+          }
+          providers = providers.filter((p) => p && typeof p.id === 'string')
+          return { model: o.model || '', providers }
         },
       }
 
@@ -2148,9 +2183,34 @@
         },
         opencode(e, p) {
           const c = JSON.parse(e)
-          if (p.provider && Object.keys(p.provider).length)
-            c.provider = p.provider
           if (p.model) c.model = p.model
+          else delete c.model
+          const list = Array.isArray(p.providers) ? p.providers : []
+          const valid = list.filter(
+            (pr) => pr && String(pr.id || '').trim() !== '',
+          )
+          if (valid.length === 0) {
+            delete c.provider
+          } else {
+            const provider = {}
+            for (const pr of valid) {
+              const id = String(pr.id).trim()
+              const entry = {}
+              if (pr.npm) entry.npm = pr.npm
+              if (pr.name) entry.name = pr.name
+              const options = {}
+              if (pr.baseUrl) options.baseURL = pr.baseUrl
+              if (pr.apiKey) options.apiKey = pr.apiKey
+              if (Object.keys(options).length) entry.options = options
+              if (pr.model) {
+                entry.models = {
+                  [pr.model]: { name: pr.model },
+                }
+              }
+              provider[id] = entry
+            }
+            c.provider = provider
+          }
           return JSON.stringify(c, null, 2) + '\n'
         },
       }
@@ -2752,6 +2812,55 @@
             `<select class="w-full bg-surface2 border border-border hover:border-borderHover rounded-xl px-4 py-2 text-sm font-semibold text-textMain focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand/20 transition-all shadow-input cursor-pointer" data-p="${esc(pn)}" data-t="${t}" data-f="${f}" onchange="App.uf(this)">${optionHtml}</select>`,
             isLast,
           )
+        },
+        renderProviderCard(pr, pn, idx) {
+          const id = pr?.id || ''
+          const npm = pr?.npm || ''
+          const name = pr?.name || ''
+          const baseUrl = pr?.baseUrl || ''
+          const apiKey = pr?.apiKey || ''
+          const model = pr?.model || ''
+          const inputCls =
+            'w-full bg-surface2 border border-border hover:border-borderHover rounded-lg px-3 py-2 text-[13px] font-mono text-textMain placeholder-textMuted/40 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand transition-all shadow-input'
+          return `
+            <div class="rounded-xl border border-border bg-surface2/40 p-3.5 relative" data-provider-card data-idx="${idx}">
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="w-6 h-6 rounded-md bg-brand/10 text-brand text-[11px] font-bold flex items-center justify-center shrink-0">${idx + 1}</span>
+                  <span class="text-[13px] font-semibold text-textMain truncate">${esc(id || I18n.text('Unnamed Provider'))}</span>
+                </div>
+                <button type="button" class="w-7 h-7 rounded-lg text-textMuted hover:text-danger hover:bg-dangerLight transition-colors flex items-center justify-center active:scale-95 shrink-0" onclick="App.removeProvider(${idx}, '${esc(pn)}')" title="${I18n.text('Delete')}" aria-label="${I18n.text('Delete')}">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('ID')}</label>
+                  <input type="text" value="${esc(id)}" placeholder="myprovider" class="${inputCls}" data-idx="${idx}" data-k="id" onchange="App.uProviderField(this, '${esc(pn)}')">
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('Package (npm)')}</label>
+                  <input type="text" value="${esc(npm)}" placeholder="@ai-sdk/openai-compatible" class="${inputCls}" data-idx="${idx}" data-k="npm" onchange="App.uProviderField(this, '${esc(pn)}')">
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('Name')}</label>
+                  <input type="text" value="${esc(name)}" placeholder="My Provider" class="${inputCls}" data-idx="${idx}" data-k="name" onchange="App.uProviderField(this, '${esc(pn)}')">
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('Model')}</label>
+                  <input type="text" value="${esc(model)}" placeholder="gpt-4o" class="${inputCls}" data-idx="${idx}" data-k="model" onchange="App.uProviderField(this, '${esc(pn)}')">
+                </div>
+                <div class="flex flex-col gap-1 md:col-span-2">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('Base URL')}</label>
+                  <input type="text" value="${esc(baseUrl)}" placeholder="https://api.openai.com/v1" class="${inputCls}" data-idx="${idx}" data-k="baseUrl" onchange="App.uProviderField(this, '${esc(pn)}')">
+                </div>
+                <div class="flex flex-col gap-1 md:col-span-2 relative">
+                  <label class="text-[11px] font-semibold text-textMuted">${I18n.text('API Key')}</label>
+                  <input type="password" value="${esc(apiKey)}" placeholder="sk-..." class="${inputCls} pr-8" data-idx="${idx}" data-k="apiKey" onchange="App.uProviderField(this, '${esc(pn)}')" autocomplete="off">
+                  <button type="button" class="absolute right-2 top-[26px] p-1 text-textMuted hover:text-textMain transition-colors" onclick="togglePw(this)"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg></button>
+                </div>
+              </div>
+            </div>`
         },
 
         renderFormContent(tool, data, pn) {
@@ -3396,22 +3505,32 @@
               this.renderFormGroup('Sandbox & Environment', sandboxGroup)
             )
           } else {
-            const pj = data?.provider
-              ? JSON.stringify(data.provider, null, 2)
-              : ''
-            const g =
-              this.renderInputRow(
-                'Model',
-                'Target LLM for OpenCode.',
-                `<input type="text" value="${esc(data?.model || '')}" class="${rawInputCls}" data-p="${esc(pn)}" data-t="opencode" data-f="model" onchange="App.uf(this)">`,
-              ) +
-              this.renderInputRow(
-                'Provider JSON',
-                'Raw configuration object.',
-                `<textarea rows="6" class="${rawInputCls} resize-y" data-p="${esc(pn)}" data-t="opencode" data-f="provider" onchange="App.upj(this)">${esc(pj)}</textarea>`,
-                true,
-              )
-            return this.renderFormGroup('Configuration', g)
+            const providers = Array.isArray(data?.providers)
+              ? data.providers
+              : []
+            const modelGroup = this.renderInputRow(
+              'Default Model',
+              'Target LLM used when a provider does not specify its own model.',
+              `<input type="text" value="${esc(data?.model || '')}" placeholder="gpt-4o / claude-..." class="${rawInputCls}" data-p="${esc(pn)}" data-t="opencode" data-f="model" onchange="App.uf(this)">`,
+              true,
+            )
+
+            const providerCards = providers
+              .map((pr, idx) => this.renderProviderCard(pr, pn, idx))
+              .join('')
+            const providerGroup = `
+              <div class="p-4 md:p-5 space-y-3" data-providers>
+                ${providerCards || `<div class="text-[12px] text-textMuted italic">${I18n.text('No providers added yet')}</div>`}
+                <button type="button" class="mt-1 text-[12px] font-semibold text-brand hover:text-brandHover transition-colors active:scale-95 inline-flex items-center gap-1" onclick="App.addProvider('${esc(pn)}')">
+                  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 4v16m8-8H4"/></svg>
+                  ${I18n.text('Add Provider')}
+                </button>
+              </div>`
+
+            return (
+              this.renderFormGroup('Model', modelGroup) +
+              this.renderFormGroup('Providers', providerGroup)
+            )
           }
         },
 
@@ -3451,19 +3570,54 @@
           Store.saveProfile(t, p, profile)
           this.render()
         },
-        upj(el) {
-          const { p, t } = el.dataset
-          const profile = Store.getProfile(t, p)
+        _providersFromDom(pn) {
+          const profile = Store.getProfile('opencode', pn)
+          const live = profile ? profile.providers || [] : []
+          const list = document.querySelector('[data-providers]')
+          if (!list) return live
+          const cards = [...list.querySelectorAll('[data-provider-card]')]
+          return cards.map((card) => {
+            const idx = Number(card.dataset.idx)
+            const base = live[idx] || {}
+            const get = (k) => card.querySelector(`[data-k="${k}"]`)?.value ?? base[k] ?? ''
+            return {
+              id: get('id'),
+              npm: get('npm'),
+              name: get('name'),
+              baseUrl: get('baseUrl'),
+              apiKey: get('apiKey'),
+              model: get('model'),
+            }
+          })
+        },
+        uProviderField(el, pn) {
+          const profile = Store.getProfile('opencode', pn)
           if (!profile) return
-          try {
-            profile.provider = JSON.parse(el.value || '{}')
-            Store.saveProfile(t, p, profile)
-            el.style.boxShadow = ''
-            this.renderSidebar()
-            I18n.applyAll()
-          } catch {
-            el.style.boxShadow = '0 0 0 2px #e11d48'
-          }
+          const idx = Number(el.dataset.idx)
+          const k = el.dataset.k
+          profile.providers = profile.providers || []
+          profile.providers[idx] = profile.providers[idx] || {}
+          profile.providers[idx][k] = el.value
+          Store.saveProfile('opencode', pn, profile)
+          this.renderSidebar()
+        },
+        addProvider(pn) {
+          const profile = Store.getProfile('opencode', pn)
+          if (!profile) return
+          profile.providers = this._providersFromDom(pn)
+          profile.providers.push({ id: '', npm: '@ai-sdk/openai-compatible', name: '', baseUrl: '', apiKey: '', model: '' })
+          Store.saveProfile('opencode', pn, profile)
+          this.render()
+          I18n.applyAll()
+        },
+        removeProvider(idx, pn) {
+          const profile = Store.getProfile('opencode', pn)
+          if (!profile) return
+          profile.providers = this._providersFromDom(pn)
+          profile.providers.splice(idx, 1)
+          Store.saveProfile('opencode', pn, profile)
+          this.render()
+          I18n.applyAll()
         },
 
         logLine(log, status, text) {
@@ -3842,6 +3996,7 @@
       window.App = App
       window.Modal = Modal
       window.togglePw = togglePw
+
       App.init()
     </script>
   </body>
