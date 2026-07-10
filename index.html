@@ -497,6 +497,16 @@
 
     <input type="file" id="jsonImportInput" class="hidden" accept=".json" />
 
+    <datalist id="codexModelSuggestions">
+      <option value="gpt-5.6" label="GPT-5.6 (Sol alias)"></option>
+      <option value="gpt-5.6-sol" label="GPT-5.6 Sol"></option>
+      <option value="gpt-5.6-terra" label="GPT-5.6 Terra"></option>
+      <option value="gpt-5.6-luna" label="GPT-5.6 Luna"></option>
+      <option value="gpt-5.5" label="GPT-5.5"></option>
+      <option value="gpt-5.4" label="GPT-5.4"></option>
+      <option value="gpt-5.4-mini" label="GPT-5.4 Mini"></option>
+    </datalist>
+
     <script>
       const I18n = {
         KEY: 'aiswitch_language_mode',
@@ -668,10 +678,10 @@
           Timestamp: '时间戳',
           'Model Settings': '模型设置',
           Model: '模型',
-          'Requested model via web.': '通过网页登录请求的模型。',
+          'Choose a GPT-5.6 model or enter a custom identifier.':
+            '选择 GPT-5.6 模型，或输入自定义模型标识。',
           'Provider ID': '提供商 ID',
           'Internal identifier (e.g., openai).': '内部标识（例如 openai）。',
-          'Requested API model.': '请求的 API 模型。',
           Name: '名称',
           Description: '描述',
           'Display name for the provider.': '提供商显示名称。',
@@ -690,8 +700,16 @@
           'Use cached search, live search, or disable web search.':
             '使用缓存搜索、实时搜索，或禁用网页搜索。',
           'Reasoning Effort': '推理强度',
-          'Default reasoning effort for supported models.':
-            '支持模型的默认推理强度。',
+          'Controls reasoning depth; Ultra can proactively delegate supported work.':
+            '控制推理深度；Ultra 可主动将适合的工作委派给子代理。',
+          None: '无推理',
+          Minimal: '最低',
+          Low: '低',
+          Medium: '中',
+          High: '高',
+          'Extra High': '超高',
+          Max: '最大',
+          Ultra: '极致',
           'Reasoning Summary': '推理摘要',
           'Controls model reasoning summaries when supported.':
             '控制支持模型的推理摘要。',
@@ -1168,7 +1186,16 @@
           'danger-full-access',
         ]),
         codexWebSearch: optionList(['cached', 'live', 'disabled']),
-        reasoningEffort: optionList(['minimal', 'low', 'medium', 'high', 'xhigh']),
+        reasoningEffort: optionList([
+          ['none', 'None'],
+          ['minimal', 'Minimal'],
+          ['low', 'Low'],
+          ['medium', 'Medium'],
+          ['high', 'High'],
+          ['xhigh', 'Extra High'],
+          ['max', 'Max'],
+          ['ultra', 'Ultra'],
+        ]),
         reasoningSummary: optionList(['auto', 'concise', 'detailed', 'none']),
         verbosity: optionList(['low', 'medium', 'high']),
         personality: optionList(['pragmatic', 'friendly', 'none']),
@@ -2813,6 +2840,9 @@
             isLast,
           )
         },
+        renderCodexModelInput(value, pn, inputCls) {
+          return `<input type="text" list="codexModelSuggestions" value="${esc(value || '')}" placeholder="gpt-5.6" class="${inputCls}" data-p="${esc(pn)}" data-t="codex" data-f="model" onchange="App.uf(this)" autocomplete="off">`
+        },
         renderProviderCard(pr, pn, idx) {
           const id = pr?.id || ''
           const npm = pr?.npm || ''
@@ -3171,8 +3201,8 @@
               'Model Settings',
               this.renderInputRow(
                 'Model',
-                isChat ? 'Requested model via web.' : 'Requested API model.',
-                `<input type="text" value="${esc(data?.model || '')}" placeholder="gpt-4" class="${rawInputCls}" data-p="${esc(pn)}" data-t="codex" data-f="model" onchange="App.uf(this)">`,
+                'Choose a GPT-5.6 model or enter a custom identifier.',
+                this.renderCodexModelInput(data?.model, pn, rawInputCls),
                 true,
               ),
             )
@@ -3214,8 +3244,8 @@
                 ) +
                 this.renderInputRow(
                   'Model',
-                  'Requested API model.',
-                  `<input type="text" value="${esc(data?.model || '')}" placeholder="gpt-4" class="${rawInputCls}" data-p="${esc(pn)}" data-t="codex" data-f="model" onchange="App.uf(this)">`,
+                  'Choose a GPT-5.6 model or enter a custom identifier.',
+                  this.renderCodexModelInput(data?.model, pn, rawInputCls),
                 ) +
                 this.renderInputRow(
                   'Name',
@@ -3261,7 +3291,7 @@
               ) +
               this.renderSelectRow(
                 'Reasoning Effort',
-                'Default reasoning effort for supported models.',
+                'Controls reasoning depth; Ultra can proactively delegate supported work.',
                 data?.modelReasoningEffort || '',
                 pn,
                 'modelReasoningEffort',
