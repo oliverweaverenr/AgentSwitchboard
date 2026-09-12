@@ -161,6 +161,7 @@ def api_dir_list():
             continue
         items.append({
             "name": entry.name,
+            "path": str(entry),
             "is_dir": entry.is_dir(),
             "is_file": entry.is_file(),
             "size": entry.stat().st_size if entry.is_file() else None,
