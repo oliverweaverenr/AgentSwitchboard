@@ -508,7 +508,8 @@
     </datalist>
 
     <script>
-      const I18n = {
+      
+const I18n = {
         KEY: 'aiswitch_language_mode',
         mode: 'auto',
         active: 'en',
@@ -1095,6 +1096,75 @@
           await writable.write(content)
           await writable.close()
         },
+        // === Hidden files visible by default (Arch Linux fix) ===
+        FS.hiddenFiles = true
+
+        // === Firefox / non-Chromium fallback via server API ===
+        if (!('showOpenFilePicker' in window)) {
+          FS.serverMode = true
+          FS.link = async function(key) {
+            const def = FILE_DEFS[key]
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = Object.keys(def.accept).join(',')
+            input.onchange = async (e) => {
+              const file = e.target.files[0]
+              if (!file) return
+              this.handles[key] = { _file: file, _key: key }
+              await HandleDB.save(key, this.handles[key])
+              toast(fileLabel(key) + ' ' + I18n.text('linked'), 'success')
+            }
+            input.click()
+          }
+          FS.read = async function(key) {
+            const h = this.handles[key]
+            if (!h) return null
+            if (h._file) return await h._file.text()
+            // Fetch from server
+            const def = FILE_DEFS[key]
+            const resp = await fetch('/api/file/read?path=' + encodeURIComponent(def.path))
+            if (!resp.ok) throw new Error('Read failed')
+            const data = await resp.json()
+            h._content = data.content
+            return data.content
+          }
+          FS.write = async function(key, content) {
+            const h = this.handles[key]
+            if (!h) throw new Error(I18n.text('file not linked'))
+            const def = FILE_DEFS[key]
+            const resp = await fetch('/api/file/write', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: def.path, content })
+            })
+            if (!resp.ok) {
+              const err = await resp.json().catch(() => ({}))
+              throw new Error(err.detail || 'Write failed')
+            }
+            h._content = content
+            return true
+          }
+          FS.ensurePermission = async function(key) {
+            return true  // server enforces permissions
+          }
+          FS.init = async function() {
+            this.handles = {}
+            for (const key of Object.keys(FILE_DEFS)) {
+              const h = await HandleDB.load(key)
+              if (!h) continue
+              this.handles[key] = h
+            }
+          }
+          FS.unlink = async function(key) {
+            delete this.handles[key]
+            await HandleDB.remove(key)
+          }
+          FS.isPersistedHandle = function(h) {
+            return h && (h._file || h._content !== undefined)
+          }
+        }
+
+
       }
 
       const TOOL_ORDER = ['claude', 'codex', 'opencode']
@@ -2316,11 +2386,13 @@
           document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') Modal.close()
           })
+          this._restoreHiddenFilesPref()
           if (!('showOpenFilePicker' in window)) {
-            this.renderUnsupported()
-            return
+            // Server mode: skip FS.init, use /api/ endpoints directly
+            FS.serverMode = true
+          } else {
+            await FS.init()
           }
-          await FS.init()
           this._onboardingOpen = this.shouldAutoShowOnboarding()
           this.render()
         },
@@ -2329,9 +2401,14 @@
           document.getElementById('mainContent').innerHTML = `
             <div class="h-full flex items-center justify-center p-8 bg-surface">
               <div class="max-w-md w-full bg-surface border border-border rounded-2xl p-8 text-center shadow-card">
-                <div class="w-12 h-12 bg-dangerLight text-danger rounded-full flex items-center justify-center mx-auto mb-5"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg></div>
-                <h3 class="text-lg font-bold text-textMain mb-2">Browser Not Supported</h3>
-                <p class="text-textMuted text-sm leading-relaxed">Agent Switchboard requires the File System Access API. Please use a modern desktop Chromium browser (Chrome, Edge).</p>
+                <div class="w-12 h-12 bg-brandLight text-brand rounded-full flex items-center justify-center mx-auto mb-5"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg></div>
+                <h3 class="text-lg font-bold text-textMain mb-2">` + (I18n.isZh() ? '服务器模式' : 'Server Mode') + `</h3>
+                <p class="text-textMuted text-sm leading-relaxed mb-4">` + (I18n.isZh()
+                  ? '检测到 Firefox 或非 Chromium 浏览器。Agent Switchboard 已切换至本地服务器模式，请确保 Python Flask 后端正在运行。'
+                  : 'Detected Firefox or non-Chromium browser. Agent Switchboard switched to server mode — please ensure the Python Flask backend is running.') + `</p>
+                <div class="text-xs font-mono bg-surface2 rounded-lg p-3 text-textMuted">
+                  ` + (I18n.isZh() ? '启动命令: ' : 'Start: ') + `<code class="text-brand">python3 app.py</code>
+                </div>
               </div>
             </div>`
           I18n.applyAll()
@@ -2358,8 +2435,8 @@
 
         showOnboarding() {
           if (!('showOpenFilePicker' in window)) {
-            this.renderUnsupported()
-            return
+            // Server mode: skip, just show onboarding
+            FS.serverMode = true
           }
           this._onboardingOpen = true
           this.render()
@@ -2412,10 +2489,21 @@
           I18n.setMode(mode)
           this.renderLanguageTabs()
           if (!('showOpenFilePicker' in window)) {
-            this.renderUnsupported()
-            return
+            FS.serverMode = true
           }
           this.render()
+        },
+
+        toggleHiddenFiles() {
+          FS.hiddenFiles = !FS.hiddenFiles
+          localStorage.setItem('aiswitch_hidden_files', FS.hiddenFiles ? '1' : '0')
+          this.render()
+        },
+
+        // Restore hidden files preference on init
+        _restoreHiddenFilesPref() {
+          const val = localStorage.getItem('aiswitch_hidden_files')
+          if (val !== null) FS.hiddenFiles = val === '1'
         },
 
         renderToolTabs() {
@@ -2436,6 +2524,21 @@
           const active = Store.getActive(tool)
           const selected = Store.getSelected(tool)
           const ready = toolManagementReady(tool)
+          // Render hidden files toggle
+          const toggleWrap = document.getElementById('sidebarHeader')
+          if (toggleWrap) {
+            toggleWrap.innerHTML = \`
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-bold text-textMuted uppercase tracking-widest">\${I18n.text('Profiles')}</span>
+                  <button id="hiddenToggle" class="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all \${FS.hiddenFiles ? 'bg-brandMuted text-brand border border-brand/30' : 'bg-surface2 text-textMuted border border-border'}" onclick="App.toggleHiddenFiles()">
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    \${FS.hiddenFiles ? (I18n.isZh() ? '隐藏文件' : 'Hidden') : (I18n.isZh() ? '显示隐藏' : 'Show')}
+                  </button>
+                </div>
+              </div>\`
+          }
+
           const list = document.getElementById('profileList')
 
           if (!ready) {
@@ -2459,7 +2562,11 @@
             return
           }
 
-          list.innerHTML = Object.entries(profiles)
+          // Filter profiles starting with dot when hidden files are off
+          const visibleProfiles = FS.hiddenFiles
+            ? profiles
+            : Object.fromEntries(Object.entries(profiles).filter(([name]) => !name.startsWith('.')))
+          list.innerHTML = Object.entries(visibleProfiles)
             .map(
               ([name, profile]) => `
             <div class="group relative px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 flex items-center justify-between ${selected === name ? 'bg-brandMuted text-brand' : 'bg-transparent hover:bg-surface2'} active:scale-[0.98]" onclick="App.selectProfile(${jsArg(name)})">
