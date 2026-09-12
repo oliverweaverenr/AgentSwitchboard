@@ -1096,8 +1096,10 @@ const I18n = {
           await writable.write(content)
           await writable.close()
         },
-        // === Hidden files visible by default (Arch Linux fix) ===
-        FS.hiddenFiles = true
+      }
+
+      // === Hidden files visible by default (Arch Linux fix) ===
+      FS.hiddenFiles = true
 
         // === Firefox / non-Chromium fallback via server API ===
         if (!('showOpenFilePicker' in window)) {
@@ -1163,9 +1165,6 @@ const I18n = {
             return h && (h._file || h._content !== undefined)
           }
         }
-
-
-      }
 
       const TOOL_ORDER = ['claude', 'codex', 'opencode']
       const TOOL_META = {
