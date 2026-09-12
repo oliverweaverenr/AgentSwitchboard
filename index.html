@@ -1111,7 +1111,7 @@ const I18n = {
             const resp = await fetch('/api/dir/list?dir=' + encodeURIComponent(dir) + '&hidden=1')
             if (!resp.ok) throw new Error('Failed to list directory')
             const data = await resp.json()
-            const files = data.files || []
+            const files = data.items || []
             if (!files.length) {
               toast(I18n.text('No files found in ') + dir, 'warning')
               return
